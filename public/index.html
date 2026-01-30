@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MA 起始计算工具</title>
+  <title>MA 工具</title>
   <style>
     :root {
       color-scheme: light;
@@ -165,13 +165,14 @@
 <body>
   <main class="app">
     <header>
-      <h1>MA 起始计算工具</h1>
-      <p>输入结束时间 (YYYYMMDDhh)，系统会计算 MA30 / MA60 的起始时间。</p>
+      <h1>MA 工具</h1>
+      <p>输入结束时间 (YYYYMMDDhh) 与 CSV 路径，可计算 MA30 / MA60 起始时间与斜率涨跌预测。</p>
     </header>
 
     <section class="panel">
       <div class="input-row">
         <input id="codeInput" type="text" placeholder="请输入 2025012816" />
+        <input id="csvInput" type="text" placeholder="请输入 CSV 路径，例如 /data/ma.csv" />
         <button id="calcButton" type="button">查询 / 计算</button>
       </div>
 
@@ -187,6 +188,7 @@
   <script>
     const codeInput = document.getElementById("codeInput");
     const calcButton = document.getElementById("calcButton");
+    const csvInput = document.getElementById("csvInput");
     const resultGrid = document.getElementById("resultGrid");
     const emptyState = document.getElementById("emptyState");
 
@@ -212,29 +214,66 @@
       resultGrid.hidden = false;
     };
 
-    const fetchResult = async (rawValue) => {
+    const fetchResult = async (rawValue, rawCsvPath) => {
       const value = rawValue.trim();
       if (!value) {
         renderEmpty("请输入 YYYYMMDDhh，例如 2025012816。");
         return;
       }
+      const csvPath = rawCsvPath.trim();
 
       calcButton.disabled = true;
       calcButton.textContent = "计算中...";
 
       try {
-        const response = await fetch(`/api/ma?value=${encodeURIComponent(value)}`);
-        const payload = await response.json();
-        if (!response.ok) {
-          renderEmpty(payload.error || "请求失败，请稍后重试。");
+        const [maResponse, trendResponse] = await Promise.all([
+          fetch(`/api/ma?value=${encodeURIComponent(value)}`),
+          csvPath
+            ? fetch(
+                `/api/ma-trend?value=${encodeURIComponent(value)}&csv=${encodeURIComponent(
+                  csvPath
+                )}`
+              )
+            : Promise.resolve(null),
+        ]);
+
+        const maPayload = await maResponse.json();
+        if (!maResponse.ok) {
+          renderEmpty(maPayload.error || "请求失败，请稍后重试。");
           return;
         }
 
-        renderResult([
-          { label: "输入时间", value: payload.input },
-          { label: "MA30 起始", value: payload.ma30_start },
-          { label: "MA60 起始", value: payload.ma60_start },
-        ]);
+        const resultItems = [
+          { label: "输入时间", value: maPayload.input },
+          { label: "MA30 起始", value: maPayload.ma30_start },
+          { label: "MA60 起始", value: maPayload.ma60_start },
+        ];
+
+        if (trendResponse) {
+          const trendPayload = await trendResponse.json();
+          if (!trendResponse.ok) {
+            renderEmpty(trendPayload.error || "趋势计算失败，请稍后重试。");
+            return;
+          }
+
+          resultItems.push(
+            { label: "最新时间", value: trendPayload.latest_ts },
+            { label: "上一个时间", value: trendPayload.prev_ts },
+            { label: "MA30 最新值", value: trendPayload.ma30_latest },
+            { label: "MA30 上一个值", value: trendPayload.ma30_prev },
+            { label: "MA30 预测", value: trendPayload.ma30_trend },
+            { label: "MA60 最新值", value: trendPayload.ma60_latest },
+            { label: "MA60 上一个值", value: trendPayload.ma60_prev },
+            { label: "MA60 预测", value: trendPayload.ma60_trend }
+          );
+        } else {
+          resultItems.push({
+            label: "提示",
+            value: "可输入 CSV 路径以获取 MA30/MA60 斜率预测。",
+          });
+        }
+
+        renderResult(resultItems);
       } catch (error) {
         renderEmpty("网络请求失败，请确认后端已启动。");
       } finally {
@@ -244,12 +283,18 @@
     };
 
     calcButton.addEventListener("click", () => {
-      fetchResult(codeInput.value);
+      fetchResult(codeInput.value, csvInput.value);
     });
 
     codeInput.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
-        fetchResult(codeInput.value);
+        fetchResult(codeInput.value, csvInput.value);
+      }
+    });
+
+    csvInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        fetchResult(codeInput.value, csvInput.value);
       }
     });
   </script>
